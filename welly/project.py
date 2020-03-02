@@ -5,6 +5,8 @@ Defines a multi-well 'project'.
 :copyright: 2016 Agile Geoscience
 :license: Apache 2.0
 """
+from __future__ import print_function
+
 import glob
 from collections import Counter
 import re
@@ -30,7 +32,6 @@ class Project(object):
         self.source = source
         self.__list = list_of_Wells
         self.__index = 0
-        self._iter = iter(self.__list)  # Set up iterable.
 
     def __repr__(self):
         s = [str(w.uwi) for w in self.__list]
@@ -41,11 +42,11 @@ class Project(object):
         return '\n'.join(s)
 
     def __getitem__(self, key):
-        if type(key) is slice:
+        if isinstance(key, slice):
             i = key.indices(len(self.__list))
             result = [self.__list[n] for n in range(*i)]
             return Project(result)
-        elif type(key) is list:
+        elif isinstance(key, list):
             result = []
             for j in key:
                 result.append(self.__list[j])
@@ -57,25 +58,11 @@ class Project(object):
         self.__list[key] = value
 
     def __iter__(self):
-        return self
-
-    def __next__(self):
-        try:
-            result = self.__list[self.__index]
-        except IndexError:
-            self.__index = 0
-            raise StopIteration
-        self.__index += 1
-        return result
-
-    def next(self):
-        """
-        Retains Python 2 compatibility.
-        """
-        return self.__next__()
+        for w in self.__list:
+            yield w
 
     def __len__(self):
-        return len(self.__list)
+        return len(list(self.__list))
 
     def __contains__(self, item):
         if isinstance(item, Well):
@@ -148,7 +135,7 @@ class Project(object):
         if (req is not None) and (alias is None):
             raise WellError("You need to provide an alias dict as well as requirement list.")
         if path is None:
-            path = './*.las'
+            path = './*.[LlAaSs]'
         list_of_Wells = [Well.from_las(f, remap=remap, funcs=funcs, 
                                         data=data, req=req, alias=alias, encoding=encoding,
                                         printfname=printfname)
@@ -273,7 +260,7 @@ class Project(object):
 
         # Make header.
         keys_ = [k+'*' if k in alias else k for k in keys]
-        r = '</th><th>'.join(['Idx', 'UWI', 'Data', 'Quality'] + keys_)
+        r = '</th><th>'.join(['Idx', 'UWI', 'Data', 'Passing'] + keys_)
         rows = '<tr><th>{}</th></tr>'.format(r)
 
         # Make summary row.
@@ -286,8 +273,8 @@ class Project(object):
 
         q_colours = {
             0: '#FF3333',
-            1: '#33FF33',
-            -1: '#CCCCCC'
+            1: '#33EE33',
+            -1: '#AACCAA'
             # default: '#FFFFCC'  # Done with get when we use this dict.
         }
 
@@ -300,9 +287,11 @@ class Project(object):
             q_well = w.qc_data(tests, alias)
 
             curves = []
-            q, q_total, q_count = 0, 0, 0
+            q_total, q_count = 0, 0
 
             for c in this_well:
+                q = -1
+                num_tests, num_passes = 0, 0
                 if c is None:
                     curves.append(('#CCCCCC', '', '', '#CCCCCC', '', ''))
                 else:
@@ -311,19 +300,21 @@ class Project(object):
                         if q_this:
                             results = q_this.values()
                             if results:
-                                q = sum(results) / len(results)
+                                num_tests = len(results)
+                                num_passes = sum(results)
+                                q = num_passes / num_tests
                     q_colour = q_colours.get(q, '#FFCC33')
                     c_mean = '{:.2f}'.format(float(np.nanmean(c))) if np.any(c[~np.isnan(c)]) else np.nan
-                    curves.append(('#CCEECC', c.mnemonic, str(q), q_colour, c_mean, c.units))
-                q_total += q
-                q_count += 1
+                    curves.append(('#CCEECC', c.mnemonic, f"{num_passes}/{num_tests}", q_colour, c_mean, c.units))
+                q_total += num_passes
+                q_count += num_tests
 
             # Make general columns.
             count = w.count_curves(keys, alias)
             if count == 0:
                 score = '–'
             else:
-                score = '{:.0f}'.format(100*(q_total/q_count)) if q_total >= 0 else '–'
+                score = '{:.0f}'.format(100*(q_total/q_count)) if (q_total >= 0) and (q_count > 0) else '–'
             s = '<td>{}</td><td><span style="font-weight:bold;">{}</span></td><td>{}/{}&nbsp;curves</td><td>{}</td>'
             rows += s.format(i, w.uwi, count, len(w.data), score)
 
@@ -347,6 +338,16 @@ class Project(object):
     def plot_kdes(self, mnemonic, alias=None, uwi_regex=None, return_fig=False):
         """
         Plot KDEs for all curves with the given name.
+
+        Args:
+            menmonic (str): the name of the curve to look for.
+            alias (dict): a welly alias dictionary.
+            uwi_regex (str): a regex pattern. Only this part of the UWI will be displayed
+                on the plot of KDEs.
+            return_fig (bool): whether to return the matplotlib figure object.
+
+        Returns:
+            None or figure.
         """
         wells = self.find_wells_with_curve(mnemonic, alias=alias)
         fig, axs = plt.subplots(len(self), 1, figsize=(10, 1.5*len(self)))
@@ -372,8 +373,6 @@ class Project(object):
             else:
                 continue
 
-        plt.show()
-
         if return_fig:
             return fig
         else:
@@ -382,13 +381,130 @@ class Project(object):
     def find_wells_with_curve(self, mnemonic, alias=None):
         """
         Returns a new Project with only the wells which have the named curve.
+
+        Args:
+            menmonic (str): the name of the curve to look for.
+            alias (dict): a welly alias dictionary.
+        
+        Returns:
+            project.
         """
-        return Project(w for w in self if w.get_curve(mnemonic, alias=alias) is not None)
+        return Project([w for w in self if w.get_curve(mnemonic, alias=alias) is not None])
+
+    def find_wells_without_curve(self, mnemonic, alias=None):
+        """
+        Returns a new Project with only the wells which DO NOT have the named curve.
+
+        Args:
+            menmonic (str): the name of the curve to look for.
+            alias (dict): a welly alias dictionary.
+        
+        Returns:
+            project.
+        """
+        return Project([w for w in self if w.get_curve(mnemonic, alias=alias) is None])
 
     def get_wells(self, uwis=None):
+        """
+        Returns a new Project with only the wells named by UWI.
+
+        Args:
+            uwis (list): list or tuple of UWI strings.
+        
+        Returns:
+            project.
+        """
         if uwis is None:
             return Project(self.__list)
         return Project([w for w in self if w.uwi in uwis])
+
+    def omit_wells(self, uwis=None):
+        """
+        Returns a new project where wells with specified uwis have been omitted
+
+        Args: 
+            uwis (list): list or tuple of UWI strings.
+
+        Returns: 
+            project
+        """
+        if uwis is None:
+            raise ValueError('Must specify at least one uwi')
+        return Project([w for w in self if w.uwi not in uwis])
+
+    def get_well(self, uwi):
+        """
+        Returns a Well object identified by UWI
+
+        Args:
+            uwi (string): the UWI string for the well.
+        
+        Returns:
+            well
+        """
+        if uwi is None:
+            raise ValueError('a UWI must be provided')
+        matching_wells = [w for w in self if w.uwi == uwi]
+        return matching_wells[0] if len(matching_wells) >= 1 else None
+
+    def merge_wells(self, right, keys=None):
+        """
+        Returns a new Project object containing wells from self where
+        curves from the wells on the right have been added. Matching between
+        wells in self and right is based on uwi match and ony wells in self
+        are considered
+
+        Args:
+            uwi (string): the UWI string for the well.
+        
+        Returns:
+            project
+        """
+        wells = []
+        for w in self:
+            rw = right.get_well(w.uwi)
+            if rw is not None:
+                if keys is None:
+                    keys = list(rw.data.keys())
+                for k in keys:
+                    try:
+                        w.data[k] = rw.data[k]
+                    except:
+                        pass
+            wells.append(w)
+        return Project(wells)
+
+    def df(self, keys=None, basis=None, alias=None, rename_aliased=True):
+        """
+        Makes a pandas DataFrame containing Curve data for all the wells
+        in the Project. The DataFrame has a dual index of well UWI and
+        curve Depths. Requires `pandas`.
+
+        Args:
+            keys (list): List of strings: the keys of the data items to
+                survey, if not all of them.
+            basis (array): A basis, if you want to enforce one, otherwise
+                you'll get the result of ``survey_basis()``.
+            alias (dict): Alias dictionary.
+            rename_aliased (bool): Whether to name the columns after the alias,
+                i.e. the alias dictionary key, or after the curve mnemonic.
+                Default is False, do not rename: use the mnemonic.
+
+        Returns:
+            ``pandas.DataFrame``.
+        """
+        import pandas as pd
+
+        dfs = []
+        for w in self:
+            try:
+                df = w.df(uwi=True, keys=keys, basis=basis, alias=alias, rename_aliased=rename_aliased)
+            except WellError:
+                # Probably there's no data for this well.
+                df = None
+            dfs.append(df)
+
+        return pd.concat(dfs)
 
     def data_as_matrix(self, X_keys,
                        y_key=None,

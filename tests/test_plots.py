@@ -59,17 +59,17 @@ def test_synthetic_plot():
     return fig
 
 
-@pytest.mark.mpl_image_compare(**params)
-def test_well_synthetic_plot():
-    """
-    Tests mpl image of synthetic.
-    """
-    w = Well.from_las(FNAME)
-    w.make_synthetic()
+# @pytest.mark.mpl_image_compare(**params)
+# def test_well_synthetic_plot():
+#     """
+#     Tests mpl image of synthetic.
+#     """
+#     w = Well.from_las(FNAME)
+#     w.make_synthetic()
 
-    fig = w.data['Synthetic'].plot(return_fig=True)
+#     fig = w.data['Synthetic'].plot(return_fig=True)
 
-    return fig
+#     return fig
 
 
 @pytest.mark.mpl_image_compare(**params)
